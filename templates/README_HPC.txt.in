@@ -1,0 +1,38 @@
+@PROJECT@ -- dinamica molecular no cluster (PBS), gerado por docking-to-md
+==========================================================================
+
+Sistemas: @SYSTEMS@
+
+COMO RODAR
+  1. Envie e extraia:
+       scp @NAME@.tar.gz <usuario>@<cluster>:<pasta>/
+       tar xzf @NAME@.tar.gz && cd @NAME@
+  2. Dispare todos:   bash submit_all.sh
+     ou um so:        cd <sistema> && qsub <sistema>_run_md.pbs
+  3. Acompanhe:       tail -f <sistema>/<sistema>_STATUS.txt
+  4. Se o job atingir o limite de tempo antes dos @PROD_NS@ ns: ressubmeta o MESMO .pbs
+     (continua do checkpoint, -cpi -append; checkpoint a cada 15 min).
+
+ETAPAS (por sistema)
+  04  <sistema>_04_solvated.gro + _04_topology.top   (entrada)
+  05  empr      steep com -DPOSRES (pesados da proteina, cofatores e ligante)
+  06  em        steep sem restricao
+  07  cg        gradiente conjugado
+  08  mdpr298   MD com -DPOSRES (duracao definida em mdpr298.mdp)
+  09  producao  @PROD_NS@ ns, continuation = yes, gen_vel = no, a partir do checkpoint da 08
+                (o MDP da producao e gerado a partir de mdnvt298.mdp pelo proprio PBS)
+
+QC DAS MINIMIZACOES
+  Fmax abaixo do alvo -> PASS; acima do alvo mas abaixo de FMAX_ABORT -> WARN (segue);
+  acima de FMAX_ABORT -> interrompe (provavel choque). Valores no topo do .pbs.
+  Com ligantes/cofatores all-atom, ligacoes X-H quarticas do GROMOS deixam a Fmax das
+  minimizacoes sem constraints em ~1e3; na MD essas ligacoes ficam restritas.
+
+ESTRUTURA
+  @FF_NAME@.ff/                  campo de forca (incluido como ../@FF_NAME@.ff)
+  <sistema>/
+    <sistema>_04_topology.top  <sistema>_04_solvated.gro  <sistema>_04_index.ndx
+    *.itp (proteina, cofatores, ligante, posre)
+    empr.mdp em.mdp cg.mdp mdpr298.mdp mdnvt298.mdp
+    <sistema>_run_md.pbs
+  submit_all.sh  SHA256SUMS  README_HPC.txt

@@ -1,0 +1,16 @@
+# saidas do pipeline (nao versionar dados)
+run/
+*.dlg
+*.map
+*.maps.fld
+*.maps.xyz
+*.glg
+*.xtc
+*.trr
+*.tpr
+*.edr
+*.cpt
+*.tar.gz
+\#*\#
+__pycache__/
+*.pyc

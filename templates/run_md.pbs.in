@@ -1,0 +1,688 @@
+#!/bin/bash
+#PBS -N @JOBNAME@
+#PBS -q @QUEUE@
+#PBS -l nodes=@NODES@:ppn=@PPN@
+#PBS -l mem=@MEM@
+#PBS -l walltime=@WALLTIME@
+#PBS -j oe
+
+###############################################################################
+# @PROJECT@ + @LIG@ (@MOLTYPE@) -- gerado por docking-to-md
+# 05 EMPR -> 06 EM -> 07 CG -> 08 MDPR (POSRES) -> 09 MD @PROD_NS@ ns
+# Pode ser ressubmetido:
+# etapas prontas sao puladas e a producao continua do checkpoint.
+#   qsub @PREFIX@_run_md.pbs
+###############################################################################
+
+set -Eeuo pipefail
+
+cd "$PBS_O_WORKDIR"
+
+module load @MODULE@
+export OMP_NUM_THREADS=1
+
+###############################################################################
+# CONFIGURACAO
+###############################################################################
+
+SYS="@LIG@"
+PREFIX="@PREFIX@"
+
+TOP="${PREFIX}_04_topology.top"
+START="${PREFIX}_04_solvated.gro"
+
+OUT05="${PREFIX}_05_empr"
+OUT06="${PREFIX}_06_em"
+OUT07="${PREFIX}_07_cg"
+OUT08="${PREFIX}_08_mdpr298"
+OUT09="${PREFIX}_09_md@PROD_NS@ns"
+
+MDP05="empr.mdp"
+MDP06="em.mdp"
+MDP07="cg.mdp"
+MDP08="mdpr298.mdp"
+MDP09_BASE="mdnvt298.mdp"
+MDP09="${OUT09}.mdp"
+
+REPORT="${PREFIX}_STATUS.txt"
+
+GMX="@GMX@"
+MPIRUN="@MPIRUN@"
+
+# -maxwarn auditado:
+#   minimizacoes: 1 aviso (GROMOS + integrador sem multiple-time-stepping)
+#   MD:           2 avisos (o mesmo + barostato Berendsen do protocolo do laboratorio)
+MAXWARN_EM=@MAXWARN_EM@
+MAXWARN_MD=@MAXWARN_MD@
+
+# QC das minimizacoes. Ligante e FAD sao all-atom: as ligacoes X-H quarticas do GROMOS
+# sao muito rigidas e o minimizador para (precisao da maquina) com Fmax ~1e3 nelas.
+# Na MD essas ligacoes ficam restritas (constraints = all-bonds).
+#   FMAX_TARGET_* = alvo do protocolo historico -> PASS / WARN no relatorio
+#   FMAX_ABORT    = acima disso ha choque de verdade -> interrompe
+FMAX_TARGET_05=@FMAX_EMPR@
+FMAX_TARGET_06=@FMAX_EM@
+FMAX_TARGET_07=@FMAX_CG@
+FMAX_ABORT=@FMAX_ABORT@
+
+# producao depois da MDPR (ps)
+PROD_PS=@PROD_PS@
+MDPR_PS=@MDPR_PS@
+
+# O mdrun de producao deve parar antes do limite do PBS.
+SAFE_JOB_HOURS=@SAFE_HOURS@
+
+JOB_START=$(date +%s)
+
+###############################################################################
+# RELATORIO
+###############################################################################
+
+exec > >(tee -a "$REPORT") 2>&1
+
+echo
+echo "======================================================================"
+echo "${SYS} - PIPELINE COMPLETO"
+echo "05 EMPR -> 06 EM -> 07 CG -> 08 MDPR -> 09 MD @PROD_NS@ ns"
+echo "======================================================================"
+echo "Inicio da submissao: $(date)"
+echo "Host: $(hostname)"
+echo "Diretorio: $(pwd)"
+echo "PBS_JOBID: ${PBS_JOBID:-NA}"
+echo "======================================================================"
+
+###############################################################################
+# TRATAMENTO DE ERRO
+###############################################################################
+
+pipeline_error () {
+
+    RC=$?
+
+    trap - ERR
+
+    echo
+    echo "======================================================================"
+    echo "PIPELINE_FAIL"
+    echo "Sistema: ${SYS}"
+    echo "Exit code: $RC"
+    echo "Linha: ${BASH_LINENO[0]:-NA}"
+    echo "Data: $(date)"
+    echo "======================================================================"
+
+    exit "$RC"
+}
+
+trap pipeline_error ERR
+
+###############################################################################
+# VALIDACAO DOS ARQUIVOS
+###############################################################################
+
+echo
+echo "======================================================================"
+echo "VALIDACAO DOS ARQUIVOS"
+echo "======================================================================"
+
+for FILE in \
+    "$TOP" \
+    "$START" \
+    "$MDP05" \
+    "$MDP06" \
+    "$MDP07" \
+    "$MDP08" \
+    "$MDP09_BASE" \
+    "../@FF_NAME@.ff/forcefield.itp" \
+    "${SYS}.itp"
+do
+
+    if [ ! -s "$FILE" ]; then
+
+        echo "ERRO: arquivo obrigatorio nao encontrado:"
+        echo "$FILE"
+
+        exit 2
+    fi
+
+    echo "OK: $FILE"
+
+done
+
+###############################################################################
+# GROMPP COM CONTAGEM DE AVISOS
+###############################################################################
+
+run_grompp () {
+
+    # run_grompp <saida> <maxwarn> <argumentos do grompp...>
+    local OUT="$1"
+    local MAXW="$2"
+    shift 2
+
+    "$GMX" grompp "$@" \
+        -p "$TOP" \
+        -o "${OUT}.tpr" \
+        -po "${OUT}_processed.mdp" \
+        -maxwarn "$MAXW" \
+        > "${OUT}_grompp.log" 2>&1 \
+    || { tail -40 "${OUT}_grompp.log"; return 3; }
+
+    echo "grompp ${OUT}: $(grep -c '^WARNING' "${OUT}_grompp.log" || true) aviso(s), $(grep -c '^NOTE' "${OUT}_grompp.log" || true) nota(s)"
+}
+
+###############################################################################
+# FUNCAO DE QC DAS MINIMIZACOES
+###############################################################################
+
+check_fmax () {
+
+    LOG="$1"
+    TARGET="$2"
+    STAGE="$3"
+
+    if [ ! -f "$LOG" ]; then
+
+        echo "$STAGE: log nao encontrado."
+        return 2
+    fi
+
+    FMAX=$(
+        sed -n \
+        's/.*Maximum force[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' \
+        "$LOG" | tail -1
+    )
+
+    ATOM=$(
+        sed -n \
+        's/.*Maximum force.*on atom[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+        "$LOG" | tail -1
+    )
+
+    POTENTIAL=$(
+        sed -n \
+        's/.*Potential Energy[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' \
+        "$LOG" | tail -1
+    )
+
+    if [ -z "${FMAX:-}" ]; then
+
+        echo "$STAGE: nao foi possivel extrair Fmax."
+        return 2
+    fi
+
+    echo
+    echo "$STAGE"
+    echo "Fmax             = $FMAX"
+    echo "Alvo             = < $TARGET"
+    echo "Limite (aborta)  = < $FMAX_ABORT"
+    echo "Atomo Fmax       = ${ATOM:-NA}"
+    echo "Potential Energy = ${POTENTIAL:-NA}"
+
+    if awk -v f="$FMAX" -v t="$TARGET" 'BEGIN {exit !(f < t)}'; then
+
+        echo "QC_${STAGE}=PASS"
+        return 0
+
+    elif awk -v f="$FMAX" -v t="$FMAX_ABORT" 'BEGIN {exit !(f < t)}'; then
+
+        echo "QC_${STAGE}=WARN (acima do alvo, abaixo do limite; segue)"
+        return 0
+
+    else
+
+        echo "QC_${STAGE}=FAIL"
+        return 2
+
+    fi
+}
+
+###############################################################################
+# MINIMIZACAO GENERICA (05, 06, 07)
+###############################################################################
+
+run_min () {
+
+    # run_min <tag> <saida> <mdp> <entrada> <alvo> <codigo de saida> [usa -r]
+    local TAG="$1" OUT="$2" MDP="$3" IN="$4" TARGET="$5" CODE="$6" USE_REF="${7:-no}"
+
+    echo
+    echo "======================================================================"
+    echo "$TAG"
+    echo "======================================================================"
+
+    if [ -f "${OUT}.gro" ] && [ -f "${OUT}.log" ] && check_fmax "${OUT}.log" "$TARGET" "$TAG"; then
+
+        echo
+        echo "$TAG existente e aprovada."
+        echo "Etapa sera pulada."
+        return 0
+    fi
+
+    if [ ! -f "$IN" ]; then
+        echo "ERRO: entrada $IN nao encontrada."
+        exit "$CODE"
+    fi
+
+    echo
+    echo "Gerando ${OUT}.tpr"
+
+    if [ "$USE_REF" = "yes" ]; then
+        run_grompp "$OUT" "$MAXWARN_EM" -f "$MDP" -c "$IN" -r "$IN"
+    else
+        run_grompp "$OUT" "$MAXWARN_EM" -f "$MDP" -c "$IN"
+    fi
+
+    echo
+    echo "Executando $TAG..."
+
+    $MPIRUN "$GMX" mdrun \
+        -s "${OUT}.tpr" \
+        -deffnm "$OUT"
+
+    if ! check_fmax "${OUT}.log" "$TARGET" "$TAG"; then
+
+        echo
+        echo "======================================================================"
+        echo "PIPELINE INTERROMPIDO"
+        echo "$TAG terminou com Fmax >= $FMAX_ABORT (provavel choque)."
+        echo "======================================================================"
+
+        exit "$CODE"
+    fi
+}
+
+###############################################################################
+# 05 - EMPR / 06 - EM / 07 - CG
+###############################################################################
+
+run_min "05_EMPR" "$OUT05" "$MDP05" "$START"      "$FMAX_TARGET_05" 20 yes
+run_min "06_EM"   "$OUT06" "$MDP06" "${OUT05}.gro" "$FMAX_TARGET_06" 21
+run_min "07_CG"   "$OUT07" "$MDP07" "${OUT06}.gro" "$FMAX_TARGET_07" 22
+
+###############################################################################
+# 08 - MDPR 1 ns
+###############################################################################
+
+echo
+echo "======================================================================"
+echo "08 - MDPR (POSRES)"
+echo "======================================================================"
+
+PASS08=0
+
+if [ -f "${OUT08}.log" ]; then
+
+    if grep -q "Finished mdrun" "${OUT08}.log"; then
+
+        PASS08=1
+
+        echo
+        echo "08_MDPR ja concluida."
+        echo "Etapa sera pulada."
+
+    fi
+fi
+
+if [ "$PASS08" -eq 0 ]; then
+
+    if [ ! -f "${OUT08}.tpr" ]; then
+
+        echo
+        echo "Gerando ${OUT08}.tpr"
+
+        run_grompp "$OUT08" "$MAXWARN_MD" \
+            -f "$MDP08" \
+            -c "${OUT07}.gro" \
+            -r "${OUT07}.gro"
+
+    fi
+
+    if [ -f "${OUT08}.cpt" ]; then
+
+        echo
+        echo "Checkpoint da MDPR encontrado."
+        echo "Continuando com -cpi/-append."
+
+        $MPIRUN "$GMX" mdrun \
+            -s "${OUT08}.tpr" \
+            -deffnm "$OUT08" \
+            -cpi "${OUT08}.cpt" \
+            -append \
+            -cpt 15
+
+    else
+
+        echo
+        echo "Iniciando MDPR."
+
+        $MPIRUN "$GMX" mdrun \
+            -s "${OUT08}.tpr" \
+            -deffnm "$OUT08" \
+            -cpt 15
+
+    fi
+
+    if ! grep -q "Finished mdrun" "${OUT08}.log"; then
+
+        echo
+        echo "ERRO: MDPR nao terminou normalmente."
+
+        exit 23
+    fi
+fi
+
+###############################################################################
+# 09 - CRIAR MDP DE PRODUCAO
+###############################################################################
+
+echo
+echo "======================================================================"
+echo "09 - PREPARACAO DA PRODUCAO @PROD_NS@ ns"
+echo "======================================================================"
+
+if [ ! -f "$MDP09" ]; then
+
+python3 - "$MDP09_BASE" "$MDP09" "$SYS" "$PROD_PS" "$MDPR_PS" <<'PY'
+import sys
+from pathlib import Path
+
+src, dst, sysname = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+prod_ps, mdpr_ps = float(sys.argv[4]), float(sys.argv[5])
+
+text = src.read_text(errors="replace")
+
+remove_keys = {
+    "nsteps",
+    "tinit",
+    "gen_vel",
+    "gen-vel",
+    "continuation",
+    "unconstrained-start",
+    "unconstrained_start",
+    "define",
+}
+
+new_lines = []
+
+for line in text.splitlines():
+
+    stripped = line.strip()
+
+    if "=" in stripped and not stripped.startswith(";"):
+
+        key = stripped.split("=", 1)[0].strip().lower()
+
+        if key in remove_keys:
+            continue
+
+    new_lines.append(line)
+
+dt = 0.002
+nsteps = int(round(prod_ps / dt))
+
+new_lines.extend([
+    "",
+    "; ==============================================================",
+    f"; {sysname} - PRODUCAO {prod_ps/1000:.0f} ns",
+    "; ==============================================================",
+    "",
+    f"; dt = {dt} ps",
+    f"; {prod_ps:.0f} ps / {dt} ps = {nsteps} passos",
+    f"nsteps       = {nsteps}",
+    "",
+    f"; MDPR termina em {mdpr_ps:.0f} ps",
+    f"tinit        = {mdpr_ps:.0f}",
+    "",
+    "; continuar velocidades e estado anterior",
+    "continuation = yes",
+    "gen_vel      = no",
+    "",
+])
+
+dst.write_text("\n".join(new_lines) + "\n")
+
+print("MDP criado:", dst)
+PY
+
+fi
+
+###############################################################################
+# 09 - GERAR TPR
+###############################################################################
+
+if [ ! -f "${OUT09}.tpr" ]; then
+
+    if [ ! -f "${OUT08}.gro" ]; then
+
+        echo "ERRO: ${OUT08}.gro nao encontrado."
+        exit 24
+    fi
+
+    if [ ! -f "${OUT08}.cpt" ]; then
+
+        echo "ERRO: ${OUT08}.cpt nao encontrado."
+        exit 24
+    fi
+
+    echo
+    echo "Gerando TPR da producao."
+
+    run_grompp "$OUT09" "$MAXWARN_MD" \
+        -f "$MDP09" \
+        -c "${OUT08}.gro" \
+        -t "${OUT08}.cpt"
+
+fi
+
+###############################################################################
+# MOSTRAR DADOS DO TPR
+###############################################################################
+
+echo
+echo "======================================================================"
+echo "TPR DA PRODUCAO"
+echo "======================================================================"
+
+"$GMX" dump \
+    -s "${OUT09}.tpr" 2>/dev/null \
+| grep -E \
+'tinit[[:space:]]*=|dt[[:space:]]*=|nsteps[[:space:]]*=|init-step[[:space:]]*=' \
+| head -10 || true
+
+###############################################################################
+# FUNCAO: PRODUCAO COMPLETA?
+###############################################################################
+
+production_complete () {
+
+    if [ ! -f "${OUT09}.xtc" ]; then
+        return 1
+    fi
+
+    LAST_TIME=$(
+        "$GMX" check \
+            -f "${OUT09}.xtc" 2>&1 \
+        | sed -n \
+          's/.*Last frame.*time[[:space:]]\+\([0-9.eE+-]*\).*/\1/p' \
+        | tail -1
+    )
+
+    if [ -z "${LAST_TIME:-}" ]; then
+        return 1
+    fi
+
+    echo "Ultimo frame = ${LAST_TIME} ps"
+
+    python3 - "$LAST_TIME" "$PROD_PS" "$MDPR_PS" <<'PY'
+import sys
+
+last = float(sys.argv[1])
+
+# final esperado = MDPR + producao (ex.: 1000 + 200000 = 201000 ps)
+target = float(sys.argv[2]) + float(sys.argv[3])
+
+# tolerancia para frequencia de escrita
+tolerance = 10.0
+
+raise SystemExit(
+    0 if last >= target - tolerance else 1
+)
+PY
+}
+
+###############################################################################
+# 09 - PRODUCAO
+###############################################################################
+
+echo
+echo "======================================================================"
+echo "09 - MD PRODUCAO @PROD_NS@ ns"
+echo "======================================================================"
+
+if production_complete; then
+
+    echo
+    echo "Producao de @PROD_NS@ ns ja concluida."
+
+else
+
+    NOW=$(date +%s)
+
+    ELAPSED_HOURS=$(
+        python3 - "$JOB_START" "$NOW" <<'PY'
+import sys
+
+start = int(sys.argv[1])
+now = int(sys.argv[2])
+
+print((now - start) / 3600.0)
+PY
+    )
+
+    REMAINING_HOURS=$(
+        python3 - "$ELAPSED_HOURS" "$SAFE_JOB_HOURS" <<'PY'
+import sys
+
+elapsed = float(sys.argv[1])
+safe = float(sys.argv[2])
+
+print(f"{safe - elapsed:.2f}")
+PY
+    )
+
+    echo
+    echo "Tempo usado nesta submissao = ${ELAPSED_HOURS} h"
+    echo "Tempo seguro restante       = ${REMAINING_HOURS} h"
+
+    CAN_RUN=$(
+        python3 - "$REMAINING_HOURS" <<'PY'
+import sys
+
+remaining = float(sys.argv[1])
+
+print(
+    "YES"
+    if remaining >= 2.0
+    else "NO"
+)
+PY
+    )
+
+    if [ "$CAN_RUN" = "NO" ]; then
+
+        echo
+        echo "Pouco tempo restante no PBS."
+        echo "A producao nao sera iniciada nesta submissao."
+        echo "Ressubmeta o mesmo PBS."
+
+    else
+
+        MAXH=$(
+            python3 - "$REMAINING_HOURS" <<'PY'
+import sys
+
+remaining = float(sys.argv[1])
+
+# deixa ~1 h adicional de margem
+maxh = max(1.0, remaining - 1.0)
+
+print(f"{maxh:.2f}")
+PY
+        )
+
+        echo
+        echo "mdrun -maxh = ${MAXH} h"
+        echo "checkpoint = a cada 15 min"
+
+        if [ -f "${OUT09}.cpt" ]; then
+
+            echo
+            echo "Checkpoint encontrado:"
+            echo "${OUT09}.cpt"
+            echo
+            echo "CONTINUANDO PRODUCAO."
+
+            $MPIRUN "$GMX" mdrun \
+                -s "${OUT09}.tpr" \
+                -deffnm "$OUT09" \
+                -cpi "${OUT09}.cpt" \
+                -append \
+                -cpt 15 \
+                -maxh "$MAXH"
+
+        else
+
+            echo
+            echo "Nenhum checkpoint de producao encontrado."
+            echo "INICIANDO PRODUCAO DE @PROD_NS@ ns."
+
+            $MPIRUN "$GMX" mdrun \
+                -s "${OUT09}.tpr" \
+                -deffnm "$OUT09" \
+                -cpt 15 \
+                -maxh "$MAXH"
+
+        fi
+    fi
+fi
+
+###############################################################################
+# STATUS FINAL
+###############################################################################
+
+echo
+echo "======================================================================"
+echo "STATUS FINAL"
+echo "======================================================================"
+
+if production_complete; then
+
+    echo "${SYS}_STATUS=COMPLETE"
+    echo
+    echo "@PROD_NS@ ns de producao concluidos."
+    echo "Tempo final esperado ~$((PROD_PS + MDPR_PS)) ps."
+
+else
+
+    echo "${SYS}_STATUS=PROD_INCOMPLETE"
+    echo
+    echo "A producao ainda nao atingiu @PROD_NS@ ns."
+
+    if [ -f "${OUT09}.cpt" ]; then
+
+        echo
+        echo "Checkpoint disponivel:"
+        echo "${OUT09}.cpt"
+
+    fi
+
+    echo
+    echo "Para continuar depois deste job sair da fila:"
+    echo
+    echo "qsub ${PREFIX}_run_md.pbs"
+
+fi
+
+echo
+echo "Fim da submissao: $(date)"
+echo "======================================================================"

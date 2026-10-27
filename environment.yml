@@ -1,0 +1,14 @@
+name: docking-to-md
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python>=3.9
+  - autodock          # autodock4 4.2.6
+  - autogrid          # autogrid4 4.2.7
+  - gromacs           # etapa md (local); no cluster usa-se o modulo do HPC
+  - numpy
+  - networkx
+  - matplotlib
+  - pymol-open-source # opcional: etapa figures
+# MGLTools 1.5.7 (Python 2, prepare_*4.py) nao esta no conda: ver README.

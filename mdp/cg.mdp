@@ -1,0 +1,22 @@
+; VARIOUS PREPROCESSING OPTIONS
+;title                    = cg
+;; O que vou fazer? E aÃ­ fazer o quÃª?
+integrator  = cg           ; gradiente conjugado
+define      = -DFLEXIBLE   ; com Ã¡guas flexÃ­veis
+emtol       = 10.0          ; parar em emtol kJ/mol
+nsteps      = 10000        ; mÃ¡ximo de interaÃ§Ã
+nstcgsteep  = 100
+;; FrequÃªncia para salvar 
+nstenergy   = 1000  ; energias
+nstxtcout   = 1000  ; coordenadas no xtc
+nstvout     = 1000  ; velocidades
+nstfout     = 1000  ; forÃ§as
+;; Como encontrar vizinhos e calcular interaÃ§Ãµes
+nstlist     = 10       ; freq para atualizar lista de vizinhos e forÃ§as de longo alcance
+ns_type     = grid    ; mÃ©todo para determinar lista de vizinhos
+rlist       = 1.0     ; cutoff para vizinhos em forÃ§as de curto alcance
+cutoff-scheme = Verlet
+coulombtype = PME     ; tratamento para forÃ§as de longo alcance
+rcoulomb    = 1.0    ; cutoff para estas forÃ§as
+vdwtype     = cut-off ; tratamento para VdW de longo alcance
+rvdw        = 1.0     ; cut-off para VdW

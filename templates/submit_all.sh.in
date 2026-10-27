@@ -1,0 +1,21 @@
+#!/bin/bash
+# Submete todos os sistemas (ou so os indicados):
+#   bash submit_all.sh
+#   bash submit_all.sh <sistema> [<sistema> ...]
+# Ressubmeter e seguro: etapas prontas sao puladas e a producao continua do checkpoint.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+SYSTEMS=("$@")
+[ ${#SYSTEMS[@]} -eq 0 ] && SYSTEMS=(@SYSTEMS@)
+
+# integridade depois do upload
+if command -v sha256sum >/dev/null && [ -f SHA256SUMS ]; then
+    sha256sum -c --quiet SHA256SUMS && echo "SHA256SUMS: OK"
+fi
+
+for S in "${SYSTEMS[@]}"; do
+    [ -f "$S/${S}_run_md.pbs" ] || { echo "nao encontrado: $S/${S}_run_md.pbs"; exit 1; }
+    ( cd "$S" && echo "$S -> $(qsub "${S}_run_md.pbs")" )
+done
+qstat -u "$USER" || true
