@@ -61,8 +61,11 @@ FF_DIR=/caminho/gromos54a7_atb.ff   # versao ATUAL do ATB (atb_gromacs/5/gromos5
 WATER=spc
 BOX_TYPE=dodecahedron
 BOX_D=1.2
-SALT_CONC=0.15
-PDB2GMX_FLAGS="-ignh -merge no"     # ex.: acrescente -his para escolher as His
+SALT_CONC=0.15                      # mol/L de NaCl, alem da neutralizacao
+PDB2GMX_FLAGS="-ignh -merge no"
+PROTONATION=pdb2gmx                 # ou propka: estados de ASP/GLU/LYS/ARG/HIS pelo pKa no microambiente
+# PH=7.0                            # pH usado com PROTONATION=propka
+# PROPKA=propka3
 # MDP_DIR=meus_mdps                 # padrao: mdp/ do repositorio
 LOCAL_EM=yes
 
@@ -76,5 +79,5 @@ PBS_SAFE_HOURS=230                  # o mdrun para antes do limite e o PBS pode 
 HPC_MODULE="gromacs/2021.2-intel-2021.3.0"
 HPC_GMX=gmx_d
 HPC_MPIRUN="mpirun -np 16"
-PROD_NS=200
+PROD_NS=100                         # producao (ns), depois de 1 ns de MDPR
 MDPR_PS=1000                        # = nsteps*dt do mdpr298.mdp

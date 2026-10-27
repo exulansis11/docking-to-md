@@ -3,8 +3,8 @@
 
 ;; O que vou fazer? E aí fazer o quê?
 integrator  = steep  ; minimização
-emtol       = 50.0    ; parar em emtol kJ/mol
-nsteps      = 10000  ; máximo de iterações
+emtol       = 50.0         ; parar quando Fmax < emtol (kJ/mol/nm)
+nsteps      = 50000        ; maximo de passos (protocolo TcTR: 50.000; sem restricao)
 
 ;; Frequência para salvar 
 nstenergy   = 1000  ; energias

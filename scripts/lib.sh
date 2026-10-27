@@ -59,8 +59,11 @@ load_config() {
     WATER_GRO=spc216.gro
     BOX_TYPE=dodecahedron
     BOX_D=1.2
-    SALT_CONC=0.15
+    SALT_CONC=0.15              # mol/L de NaCl, alem da neutralizacao
     PDB2GMX_FLAGS="-ignh -merge no"
+    PROTONATION=pdb2gmx         # pdb2gmx (padrao do GROMACS, ~pH 7) | propka (pKa no microambiente, no pH abaixo)
+    PH=7.0
+    PROPKA=propka3
     MDP_DIR=""                  # padrao: mdp/ do repositorio
     LOCAL_EM=yes
     LOCAL_NT=0                  # 0 = deixa o mdrun decidir
@@ -74,7 +77,7 @@ load_config() {
     HPC_MODULE="gromacs/2021.2-intel-2021.3.0"
     HPC_GMX=gmx_d
     HPC_MPIRUN="mpirun -np 16"
-    PROD_NS=200
+    PROD_NS=100
     MDPR_PS=1000
     FMAX_TARGET_EMPR=100
     FMAX_TARGET_EM=50

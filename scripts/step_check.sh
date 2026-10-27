@@ -25,6 +25,11 @@ step_check() {
         || { warn "python precisa de numpy e networkx"; ok=0; }
     command -v "$GMX" >/dev/null 2>&1 && log "GROMACS: $("$GMX" --version 2>/dev/null | awk '/GROMACS version/{print $3; exit}')" \
         || warn "GROMACS ($GMX) nao encontrado: so necessario para a etapa md"
+    if [ "$PROTONATION" = propka ]; then
+        command -v "$PROPKA" >/dev/null 2>&1 && log "PROPKA: $("$PROPKA" --version 2>&1 | head -1) (pH $PH)" \
+            || { warn "PROPKA ($PROPKA) nao encontrado: necessario com PROTONATION=propka"; ok=0; }
+    fi
+    log "MD: NaCl $SALT_CONC M, protonacao $PROTONATION, agua $WATER, campo de forca $FF_NAME"
     command -v "$PYMOL" >/dev/null 2>&1 || warn "PyMOL ($PYMOL) nao encontrado: so necessario para a etapa figures"
 
     [ -s "$RECEPTOR" ] && log "receptor: $RECEPTOR" || { warn "receptor ausente: $RECEPTOR"; ok=0; }

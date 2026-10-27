@@ -15,6 +15,18 @@ run_pdb2gmx() {
     "$GMX" pdb2gmx -f protein_heavy.pdb -o protein.gro -p protein.top -i posre.itp \
         -ff "$FF_NAME" -water "$WATER" $PDB2GMX_FLAGS > pdb2gmx.log 2>&1 \
         || { tail -30 pdb2gmx.log; die "pdb2gmx falhou (ver $P/pdb2gmx.log)"; }
+    # protonacao pelo PROPKA no pH do config: renomeia ASP/GLU/LYS/ARG/HIS e refaz o pdb2gmx
+    if [ "$PROTONATION" = propka ]; then
+        need_cmd "$PROPKA"
+        mv pdb2gmx.log pdb2gmx_auto.log
+        "$PROPKA" protein_heavy.pdb > propka.log 2>&1 || { tail propka.log; die "PROPKA falhou (ver $P/propka.log)"; }
+        "$PYTHON" "$HERE/scripts/propka_protonate.py" protein_heavy.pdb protein_heavy.pka "$PH" \
+            pdb2gmx_auto.log protein_heavy_pka.pdb protonation.tsv | sed 's/^/    /'
+        # shellcheck disable=SC2086
+        "$GMX" pdb2gmx -f protein_heavy_pka.pdb -o protein.gro -p protein.top -i posre.itp \
+            -ff "$FF_NAME" -water "$WATER" $PDB2GMX_FLAGS > pdb2gmx.log 2>&1 \
+            || { tail -30 pdb2gmx.log; die "pdb2gmx (protonacao PROPKA) falhou (ver $P/pdb2gmx.log)"; }
+    fi
     grep -E 'Linking|Total charge' pdb2gmx.log | sed 's/^/    /'
     # cadeia unica: o pdb2gmx poe o moleculetype dentro do .top -> extrair para protein.itp
     if ! grep -qE '#include "[^"]*Protein[^"]*\.itp"' protein.top; then

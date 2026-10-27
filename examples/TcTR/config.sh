@@ -60,12 +60,17 @@ COFACTORS=("FAD:A:601" "FAD:B:602")
 COFACTOR_ITP[FAD]=entrada/cofatores/9Y2Q_GROMACS_G54A7FF_allatom.itp
 COFACTOR_REF[FAD]=entrada/cofatores/9Y2Q_allatom_optimised_geometry.pdb
 
-# ---- MD ----
+# ---- MD (protocolo TcTR do laboratorio) ----
+# pH 7,5 e 298 K (dados de TSA); NaCl 500 mM; protonacao pelo PROPKA 3.1; GROMOS 54A7 do ATB.
+# A temperatura (298 K) esta nos MDPs (mdpr298.mdp e mdnvt298.mdp: ref-t e gen-temp).
 FF_DIR=entrada/gromos54a7_atb.ff            # GROMOS 54A7 do ATB (versao atual!)
 WATER=spc
 BOX_TYPE=dodecahedron
 BOX_D=1.2
-SALT_CONC=0.15
+SALT_CONC=0.5                               # mol/L de NaCl, alem da neutralizacao
+PROTONATION=propka                          # pKa no microambiente (PROPKA) ...
+PH=7.5                                      # ... no pH do experimento
+PROPKA=propka3
 LOCAL_EM=yes
 LOCAL_NT=12
 
@@ -78,5 +83,5 @@ PBS_SAFE_HOURS=230
 HPC_MODULE="gromacs/2021.2-intel-2021.3.0"
 HPC_GMX=gmx_d
 HPC_MPIRUN="mpirun -np 16"
-PROD_NS=200
+PROD_NS=100                         # producao (ns), depois de 1 ns de MDPR
 MDPR_PS=1000                        # = nsteps*dt do mdpr298.mdp

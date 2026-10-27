@@ -20,7 +20,7 @@ receptor + ligantes (ATB)
 ```bash
 git clone https://github.com/exulansis11/docking-to-md.git
 cd docking-to-md
-conda env create -f environment.yml      # autodock4, autogrid4, gromacs, numpy, networkx, pymol
+conda env create -f environment.yml      # autodock4, autogrid4, gromacs, numpy, networkx, propka, pymol
 conda activate docking-to-md
 ```
 
@@ -74,7 +74,9 @@ Cada `<sistema>_run_md.pbs` roda empr → em → cg → MDPR (POSRES) → produ�
 
 **Pose → topologia do ATB.** Os átomos pesados da pose são casados com o ITP por **isomorfismo de grafo** (elemento + ligações), então funciona mesmo quando os nomes diferem (ex.: FAD do cristal × FAD do ATB). Os H polares vêm da pose; os apolares, do PDB do ATB por ajuste local (Kabsch). A ordem e os nomes saem iguais aos do `[ atoms ]` do ITP.
 
-**Proteína.** O receptor sai sem H e o `pdb2gmx -ignh` recoloca os H do campo de força. Protonação das His por rede de H-bond (padrão do `pdb2gmx`); para escolher, acrescente `-his` em `PDB2GMX_FLAGS`.
+**Proteína e protonação.** O receptor sai sem H e o `pdb2gmx -ignh` recoloca os H do campo de força. Com `PROTONATION=pdb2gmx` (padrão), vale a protonação do GROMACS (~pH 7; His por rede de H-bond). Com `PROTONATION=propka` e `PH=`, o PROPKA calcula o pKa de cada resíduo ionizável no microambiente da proteína e o estado no pH escolhido vira o nome do resíduo no PDB, que o `pdb2gmx` lê sem perguntas: ASP/GLU com pKa > pH → `ASPH`/`GLUH`; LYS/ARG com pKa < pH → `LYSN`/`ARGN`; HIS com pKa > pH → `HISH`, senão neutra com o tautômero que o `pdb2gmx` escolheria. CYS/TYR desprotonadas e termini neutros não têm bloco no GROMOS 54A7 e aparecem só como aviso. Relatório por resíduo em `05_md/<L>/.../protonation.tsv`.
+
+**Sal.** `SALT_CONC` (mol/L de NaCl) além da neutralização, pelo `genion`. A temperatura fica nos MDPs (`ref-t`, `gen-temp`).
 
 **Homodímeros (`LIG_SYMMETRY="A:B"`).** Quando o alvo tem dois sítios equivalentes (ex.: na interface de um homodímero), o docking é feito num deles e, na MD, o ligante é **copiado para o outro** pela operação de simetria do dímero: ajuste dos Cα comuns [A; B] → [B; A], que num dímero simétrico é uma rotação de ~180° (o pipeline confere: RMSD < 2 Å e ângulo perto de 180°). Se algum resíduo do 2º sítio colidir com a cópia (< 2,2 Å, tipicamente uma Lys/Arg com rotâmero diferente no cristal), a cadeia lateral dele recebe a imagem simétrica da cadeia lateral equivalente do 1º sítio, para que a cópia fique no mesmo ambiente em que a pose foi obtida. Tudo é registrado em `05_md/<L>/build.log`: simetria, resíduos alterados, correspondência dos resíduos de contato entre os dois sítios e a menor distância da cópia ao resto do sistema. A alternativa mais conservadora é fazer um novo docking no 2º sítio.
 

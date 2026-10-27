@@ -4,8 +4,8 @@
 ;; O que vou fazer? E aí fazer o quê?
 integrator  = steep     ; minimização
 define      = -DPOSRES  ; com restrição de posições
-emtol       = 100.0     ; parar em emtol kJ/mol
-nsteps      = 10000     ; máximo de interações
+emtol       = 100.0        ; parar quando Fmax < emtol (kJ/mol/nm)
+nsteps      = 50000        ; maximo de passos (protocolo TcTR: 50.000; com restricao de posicao)
 ;energygrps  = 
 
 ;; Frequência para salvar 

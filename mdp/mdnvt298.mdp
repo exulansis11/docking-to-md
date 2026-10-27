@@ -9,7 +9,7 @@ integrator               = md
 ; Start time and timestep in ps
 tinit                    = 0
 dt                       = 0.002
-nsteps                   = 5000000 ; = 10000.0 ps
+nsteps                   = 50000000 ; = 100 ns (o PBS recalcula a partir de PROD_NS)
 ; For exact run continuation or redoing part of a run
 init_step                = 0
 ; mode for center of mass motion removal
@@ -99,14 +99,14 @@ Tcoupl                   = v-rescale
 tc-grps                  = Protein non-protein; ver http://www.gromacs.org/Documentation/Terminology/Thermostats antes estava System
 ; Time constant (ps) and reference temperature (K)
 tau-t                    = 0.1 0.1; 0.1 0.1
-ref-t                    = 298 298;300 300 300 300
+ref-t                    = 298 298 ; protocolo TcTR: 298 K
 ; Pressure coupling     
 Pcoupl                   = berendsen
 Pcoupltype               = Isotropic
 ; Time constant (ps), compressibility (1/bar) and reference P (bar)
 tau-p                    = 0.5
 compressibility          = 4.5e-5
-ref-p                    = 1.0
+ref-p                    = 1.0      ; protocolo TcTR: 1 bar
 ; Random seed for Andersen thermostat
 andersen_seed            = 815131
 
